@@ -137,23 +137,4 @@ io.on('connection', (socket) => {
     });
 });
 
-// Conectar
-const socket = io('https://tu-servidor', { transports: ['websocket'] });
 
-// confirmar id de usuario al servidor
-socket.on('connect', () => {
-  socket.emit('authenticate', miUserId);
-});
-
-// al iniciar llamada: enviar oferta al otro usuario
-// offer es el SDP generado por RTCPeerConnection.createOffer()
-socket.emit('start-call-with-offer', { otherUserId: idDelOtro, offer }, (ack) => {
-  console.log('ack start-call:', ack);
-});
-
-// recibir oferta entrante
-socket.on('offer-received', async ({ callerSocketId, offer }) => {
-  // setRemoteDescription, createAnswer, etc.
-  // luego enviar answer incluyendo callerSocketId
-  socket.emit('answer', { callerSocketId, answerSDP });
-});
