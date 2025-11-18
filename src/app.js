@@ -44,6 +44,7 @@ app.register(taskRoutes, { prefix: '/tasks' });
 app.register(rewardRoutes, { prefix: '/rewards' });
 
 // --- PASO 3: AÑADIR SOCKET.IO A LA APP EXISTENTE ---
+// --- PASO 3: AÑADIR SOCKET.IO A LA APP EXISTENTE ---
 const io = new Server(app.server, {
     cors: { 
         origin: "https://frontend-poi.vercel.app",
@@ -52,16 +53,14 @@ const io = new Server(app.server, {
 });
 console.log('Socket.io server running');
 
-// Mapa para rastrear: qué ID de usuario tiene qué ID de socket
-// Map<userId, socketId>
 const userSocketMap = new Map();
 
 io.on('connection', (socket) => {
+    
     console.log('socket connected:', socket.id, 'from', socket.handshake.address);
-    // opcional: informa al cliente su socketId para debugging
     socket.emit('whoami', { socketId: socket.id });
 
-    // 1. Cuando un usuario se conecta, nos dice quién es
+    // 1. Autenticación (¡Seguro!)
     socket.on('authenticate', (userId) => {
         if (userId) {
             const key = String(userId);
@@ -72,11 +71,19 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 2. El que llama (A) envía su oferta AL OTRO USUARIO (B)
+    // 2. Iniciar llamada (¡Seguro!)
     socket.on('start-call-with-offer', (payload, ack) => {
+        // ▼▼▼ ¡AÑADIDO! Comprobación de seguridad
+        if (!payload || !payload.otherUserId || !payload.offer) {
+            console.error('Payload inválido en "start-call-with-offer"');
+            if (typeof ack === 'function') ack({ ok: false, reason: 'invalid-payload' });
+            return;
+        }
+        // ▲▲▲
+        
         const targetKey = String(payload.otherUserId);
         const calleeSocketId = userSocketMap.get(targetKey);
-
+        
         if (calleeSocketId) {
             console.log(`Retransmitiendo oferta de ${socket.id} a ${calleeSocketId}`);
             if (typeof ack === 'function') ack({ ok: true, targetSocketId: calleeSocketId });
@@ -91,31 +98,31 @@ io.on('connection', (socket) => {
         }
     });
 
-    // fallback: aceptar evento 'offer' con targetUserId (cliente lo usa como fallback)
-    socket.on('offer', (payload, ack) => {
-        const targetKey = String(payload.targetUserId);
-        const calleeSocketId = userSocketMap.get(targetKey);
-        if (calleeSocketId) {
-            console.log(`(fallback) reenviando offer de ${socket.id} a ${calleeSocketId}`);
-            if (typeof ack === 'function') ack({ ok: true, targetSocketId: calleeSocketId });
-            io.to(calleeSocketId).emit('offer-received', { callerSocketId: socket.id, offer: payload.offer });
-        } else {
-            if (typeof ack === 'function') ack({ ok: false, reason: 'target-offline' });
-            socket.emit('call-error', { message: 'El usuario no está conectado.' });
-        }
-    });
-
-    // 3. El que recibe (B) envía su respuesta DE VUELTA al que llamó (A)
+    // 3. Respuesta (¡Seguro!)
     socket.on('answer', (payload) => {
+        // ▼▼▼ ¡AÑADIDO! Comprobación de seguridad
+        if (!payload || !payload.callerSocketId || !payload.answer) {
+            console.error('Payload inválido en "answer"');
+            return;
+        }
+        // ▲▲▲
+        
         console.log(`Retransmitiendo respuesta a ${payload.callerSocketId}`);
         io.to(payload.callerSocketId).emit('answer-received', payload);
     });
 
-    // 4. Intercambio de candidatos ICE (información de red)
+    // 4. Candidatos ICE (¡Seguro!)
     socket.on('ice-candidate', (payload) => {
-        // soporta targetSocketId o targetUserId
+        // ▼▼▼ ¡AÑADIDO! Comprobación de seguridad
+        if (!payload || (!payload.targetSocketId && !payload.targetUserId) || !payload.candidate) {
+            console.error('Payload inválido en "ice-candidate"');
+            return;
+        }
+        // ▲▲▲
+
         let target = payload.targetSocketId;
         if (!target && payload.targetUserId) target = userSocketMap.get(String(payload.targetUserId));
+        
         if (target) {
             io.to(target).emit('ice-candidate-received', {
                 candidate: payload.candidate,
@@ -126,6 +133,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // 5. Desconexión (¡Seguro!)
     socket.on('disconnect', () => {
         for (let [userId, socketId] of userSocketMap.entries()) {
             if (socketId === socket.id) {
@@ -135,6 +143,10 @@ io.on('connection', (socket) => {
             }
         }
     });
+    
+    // 6. (Opcional) Capturador de errores
+    socket.on('error', (err) => {
+        console.error(`Socket Error: ${err.message}`);
+    });
 });
-
 
