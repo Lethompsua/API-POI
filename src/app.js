@@ -33,8 +33,9 @@ await app.register(swagger, {
     components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } }
   }
 });
-await app.ready();
 await app.register(swaggerUI, { routePrefix: '/docs' });
+
+
 
 // RUTAS
 app.register(authRoutes, { prefix: '/auth' });
@@ -43,6 +44,9 @@ app.register(chatRoutes, { prefix: '/chat' });
 app.register(groupRoutes, { prefix: '/groups' });
 app.register(taskRoutes, { prefix: '/tasks' });
 app.register(rewardRoutes, { prefix: '/rewards' });
+
+
+await app.ready();
 
 // --- PASO 3: AÑADIR SOCKET.IO A LA APP EXISTENTE ---
 // --- PASO 3: AÑADIR SOCKET.IO A LA APP EXISTENTE ---
