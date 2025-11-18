@@ -56,8 +56,10 @@ console.log('Socket.io server running');
 // Map<userId, socketId>
 const userSocketMap = new Map();
 
-// ...existing code...
 io.on('connection', (socket) => {
+    console.log('socket connected:', socket.id, 'from', socket.handshake.address);
+    // opcional: informa al cliente su socketId para debugging
+    socket.emit('whoami', { socketId: socket.id });
 
     // 1. Cuando un usuario se conecta, nos dice quién es
     socket.on('authenticate', (userId) => {
@@ -65,6 +67,8 @@ io.on('connection', (socket) => {
             const key = String(userId);
             console.log(`Usuario ${key} se autenticó con socket ${socket.id}`);
             userSocketMap.set(key, socket.id);
+        } else {
+            console.log('authenticate sin userId recibido desde', socket.id);
         }
     });
 
@@ -131,4 +135,25 @@ io.on('connection', (socket) => {
             }
         }
     });
+});
+
+// Conectar
+const socket = io('https://tu-servidor', { transports: ['websocket'] });
+
+// confirmar id de usuario al servidor
+socket.on('connect', () => {
+  socket.emit('authenticate', miUserId);
+});
+
+// al iniciar llamada: enviar oferta al otro usuario
+// offer es el SDP generado por RTCPeerConnection.createOffer()
+socket.emit('start-call-with-offer', { otherUserId: idDelOtro, offer }, (ack) => {
+  console.log('ack start-call:', ack);
+});
+
+// recibir oferta entrante
+socket.on('offer-received', async ({ callerSocketId, offer }) => {
+  // setRemoteDescription, createAnswer, etc.
+  // luego enviar answer incluyendo callerSocketId
+  socket.emit('answer', { callerSocketId, answerSDP });
 });
