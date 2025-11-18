@@ -65,19 +65,13 @@ io.on('connection', (socket) => {
     // Evento para retransmitir la "oferta" de llamada
     // Evento para retransmitir la "oferta" de llamada
     socket.on('offer', (payload) => {
-      console.log("Retransmitiendo oferta...");
-      socket.broadcast.to(payload.room).emit('offer', payload); // <-- Corregido
-    });
-
-// Evento para retransmitir la "respuesta"
-    socket.on('answer', (payload) => {
-      console.log("Retransmitiendo respuesta...");
-      socket.broadcast.to(payload.room).emit('answer', payload); // <-- Corregido
-    });
-
-// Evento para retransmitir los "candidatos de red" (la info de red)
+    io.to(payload.room).emit('offer', payload); // <-- Cambia a 'io'
+});
+socket.on('answer', (payload) => {
+    io.to(payload.room).emit('answer', payload); // <-- Cambia a 'io'
+});
 socket.on('ice-candidate', (payload) => {
-    socket.broadcast.to(payload.room).emit('ice-candidate', payload); // <-- Corregido
+    io.to(payload.room).emit('ice-candidate', payload); // <-- Cambia a 'io'
 });
 
     socket.on('disconnect', () => {
