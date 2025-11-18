@@ -45,7 +45,10 @@ app.register(rewardRoutes, { prefix: '/rewards' });
 
 // --- PASO 3: AÑADIR SOCKET.IO A LA APP EXISTENTE ---
 const io = new Server(app.server, {
-    cors: { origin: "*" }
+    cors: { 
+        origin: "https://frontend-poi.vercel.app",
+        methods: ["GET", "POST"]
+    }
 });
 console.log('Socket.io server running');
 
@@ -53,53 +56,73 @@ console.log('Socket.io server running');
 // Map<userId, socketId>
 const userSocketMap = new Map();
 
+// ...existing code...
 io.on('connection', (socket) => {
-    
+
     // 1. Cuando un usuario se conecta, nos dice quién es
     socket.on('authenticate', (userId) => {
         if (userId) {
-            console.log(`Usuario ${userId} se autenticó con socket ${socket.id}`);
-            userSocketMap.set(userId, socket.id);
+            const key = String(userId);
+            console.log(`Usuario ${key} se autenticó con socket ${socket.id}`);
+            userSocketMap.set(key, socket.id);
         }
     });
 
     // 2. El que llama (A) envía su oferta AL OTRO USUARIO (B)
-    socket.on('start-call-with-offer', (payload) => {
-        // payload = { otherUserId: 15, offer: {...} }
-        const calleeSocketId = userSocketMap.get(payload.otherUserId);
-        
+    socket.on('start-call-with-offer', (payload, ack) => {
+        const targetKey = String(payload.otherUserId);
+        const calleeSocketId = userSocketMap.get(targetKey);
+
         if (calleeSocketId) {
             console.log(`Retransmitiendo oferta de ${socket.id} a ${calleeSocketId}`);
-            // Envía la oferta SOLAMENTE al usuario B (el que recibe)
-            io.to(calleeSocketId).emit('offer-received', { 
-                callerSocketId: socket.id, // B necesita saber quién lo llama
-                offer: payload.offer 
+            if (typeof ack === 'function') ack({ ok: true, targetSocketId: calleeSocketId });
+            io.to(calleeSocketId).emit('offer-received', {
+                callerSocketId: socket.id,
+                offer: payload.offer
             });
         } else {
-            console.log(`Error: Usuario ${payload.otherUserId} no está conectado.`);
-            // (Opcional) Enviar un error de vuelta al que llama
+            console.log(`Usuario ${targetKey} no está conectado.`);
+            if (typeof ack === 'function') ack({ ok: false, reason: 'target-offline' });
+            socket.emit('call-error', { message: 'El usuario no está conectado.' });
+        }
+    });
+
+    // fallback: aceptar evento 'offer' con targetUserId (cliente lo usa como fallback)
+    socket.on('offer', (payload, ack) => {
+        const targetKey = String(payload.targetUserId);
+        const calleeSocketId = userSocketMap.get(targetKey);
+        if (calleeSocketId) {
+            console.log(`(fallback) reenviando offer de ${socket.id} a ${calleeSocketId}`);
+            if (typeof ack === 'function') ack({ ok: true, targetSocketId: calleeSocketId });
+            io.to(calleeSocketId).emit('offer-received', { callerSocketId: socket.id, offer: payload.offer });
+        } else {
+            if (typeof ack === 'function') ack({ ok: false, reason: 'target-offline' });
             socket.emit('call-error', { message: 'El usuario no está conectado.' });
         }
     });
 
     // 3. El que recibe (B) envía su respuesta DE VUELTA al que llamó (A)
     socket.on('answer', (payload) => {
-        // payload = { callerSocketId: '...', answer: {...}, answererSocketId: '...' }
         console.log(`Retransmitiendo respuesta a ${payload.callerSocketId}`);
         io.to(payload.callerSocketId).emit('answer-received', payload);
     });
 
     // 4. Intercambio de candidatos ICE (información de red)
     socket.on('ice-candidate', (payload) => {
-        // payload = { targetSocketId: '...', candidate: {...} }
-        io.to(payload.targetSocketId).emit('ice-candidate-received', { 
-            candidate: payload.candidate,
-            senderSocketId: socket.id // Envía quién es, para que el otro sepa
-        });
+        // soporta targetSocketId o targetUserId
+        let target = payload.targetSocketId;
+        if (!target && payload.targetUserId) target = userSocketMap.get(String(payload.targetUserId));
+        if (target) {
+            io.to(target).emit('ice-candidate-received', {
+                candidate: payload.candidate,
+                senderSocketId: socket.id
+            });
+        } else {
+            console.warn('No se encontró target para ice-candidate:', payload);
+        }
     });
 
     socket.on('disconnect', () => {
-        // Limpia el mapa cuando un usuario se va
         for (let [userId, socketId] of userSocketMap.entries()) {
             if (socketId === socket.id) {
                 userSocketMap.delete(userId);
