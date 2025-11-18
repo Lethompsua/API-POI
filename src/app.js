@@ -33,6 +33,7 @@ await app.register(swagger, {
     components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } }
   }
 });
+await app.ready();
 await app.register(swaggerUI, { routePrefix: '/docs' });
 
 // RUTAS
@@ -149,4 +150,12 @@ io.on('connection', (socket) => {
         console.error(`Socket Error: ${err.message}`);
     });
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen({ port: PORT, host: '0.0.0.0' })
+  .then(() => console.log(`Server running on ${PORT}`))
+  .catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
 
