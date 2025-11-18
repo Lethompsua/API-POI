@@ -44,46 +44,68 @@ app.register(taskRoutes, { prefix: '/tasks' });
 app.register(rewardRoutes, { prefix: '/rewards' });
 
 // --- PASO 3: AÑADIR SOCKET.IO A LA APP EXISTENTE ---
-// (Ahora 'app.server' SÍ existe)
 const io = new Server(app.server, {
-    cors: {
-        origin: "*", // Permite todas las conexiones (ajusta esto en producción)
-        methods: ["GET", "POST"]
-    }
+    cors: { origin: "*" }
 });
 console.log('Socket.io server running');
 
-io.on('connection', (socket) => {
-    console.log(`Un usuario se conectó: ${socket.id}`);
+// Mapa para rastrear: qué ID de usuario tiene qué ID de socket
+// Map<userId, socketId>
+const userSocketMap = new Map();
 
-    // Evento para unirse a una "sala" (la llamada)
-    socket.on('join-room', (roomId) => {
-        socket.join(roomId);
-        console.log(`Usuario ${socket.id} se unió a la sala ${roomId}`);
+io.on('connection', (socket) => {
+    
+    // 1. Cuando un usuario se conecta, nos dice quién es
+    socket.on('authenticate', (userId) => {
+        if (userId) {
+            console.log(`Usuario ${userId} se autenticó con socket ${socket.id}`);
+            userSocketMap.set(userId, socket.id);
+        }
     });
 
-    // Evento para retransmitir la "oferta" de llamada
-    // Evento para retransmitir la "oferta" de llamada
-    socket.on('offer', (payload) => {
-    io.to(payload.room).emit('offer', payload); // <-- Cambia a 'io'
-});
-socket.on('answer', (payload) => {
-    io.to(payload.room).emit('answer', payload); // <-- Cambia a 'io'
-});
-socket.on('ice-candidate', (payload) => {
-    io.to(payload.room).emit('ice-candidate', payload); // <-- Cambia a 'io'
-});
+    // 2. El que llama (A) envía su oferta AL OTRO USUARIO (B)
+    socket.on('start-call-with-offer', (payload) => {
+        // payload = { otherUserId: 15, offer: {...} }
+        const calleeSocketId = userSocketMap.get(payload.otherUserId);
+        
+        if (calleeSocketId) {
+            console.log(`Retransmitiendo oferta de ${socket.id} a ${calleeSocketId}`);
+            // Envía la oferta SOLAMENTE al usuario B (el que recibe)
+            io.to(calleeSocketId).emit('offer-received', { 
+                callerSocketId: socket.id, // B necesita saber quién lo llama
+                offer: payload.offer 
+            });
+        } else {
+            console.log(`Error: Usuario ${payload.otherUserId} no está conectado.`);
+            // (Opcional) Enviar un error de vuelta al que llama
+            socket.emit('call-error', { message: 'El usuario no está conectado.' });
+        }
+    });
+
+    // 3. El que recibe (B) envía su respuesta DE VUELTA al que llamó (A)
+    socket.on('answer', (payload) => {
+        // payload = { callerSocketId: '...', answer: {...}, answererSocketId: '...' }
+        console.log(`Retransmitiendo respuesta a ${payload.callerSocketId}`);
+        io.to(payload.callerSocketId).emit('answer-received', payload);
+    });
+
+    // 4. Intercambio de candidatos ICE (información de red)
+    socket.on('ice-candidate', (payload) => {
+        // payload = { targetSocketId: '...', candidate: {...} }
+        io.to(payload.targetSocketId).emit('ice-candidate-received', { 
+            candidate: payload.candidate,
+            senderSocketId: socket.id // Envía quién es, para que el otro sepa
+        });
+    });
 
     socket.on('disconnect', () => {
-        console.log(`Un usuario se desconectó: ${socket.id}`);
+        // Limpia el mapa cuando un usuario se va
+        for (let [userId, socketId] of userSocketMap.entries()) {
+            if (socketId === socket.id) {
+                userSocketMap.delete(userId);
+                console.log(`Usuario ${userId} (socket ${socket.id}) se desconectó.`);
+                break;
+            }
+        }
     });
-});
-
-// --- PASO 4: INICIAR EL SERVIDOR (UNA SOLA VEZ) ---
-app.listen({ port: process.env.PORT || 3000, host: '0.0.0.0' }, (err, address) => {
-    if (err) {
-        app.log.error(err);
-        process.exit(1);
-    }
-    // El logger de Fastify ya dice "Server listening at..."
 });
