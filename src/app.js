@@ -22,7 +22,9 @@ const app = Fastify({ logger: true });
 // --- PASO 2: REGISTRAR TODOS LOS PLUGINS Y RUTAS ---
 app.decorate('db', await makePool());
 
-await app.register(cors, { origin: true });
+await app.register(cors, { 
+    origin: 'https://frontend-poi.vercel.app' 
+});
 await app.register(authPlugin);
 
 await app.register(swagger, {
