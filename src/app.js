@@ -73,6 +73,7 @@ io.on('connection', (socket) => {
     socket.on('authenticate', (userId) => {
         if (!userId) return;
         userSocketMap.set(String(userId), socket.id);
+        socket.data.userId = userId;
         console.log(`Usuario ${userId} asociado al socket ${socket.id}`);
     });
 
