@@ -4,6 +4,8 @@ import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import swaggerUI from '@fastify/swagger-ui';
 import dotenv from 'dotenv';
+import multipart from '@fastify/multipart'; // <-- IMPORTA ESTO
+import uploadRoutes from './routes/upload.js'; // <-- IMPORTA ESTO
 dotenv.config();
 
 import { makePool } from './db.js';
@@ -34,7 +36,7 @@ await app.register(swagger, {
   }
 });
 await app.register(swaggerUI, { routePrefix: '/docs' });
-
+await app.register(multipart);
 
 
 // RUTAS
@@ -44,6 +46,7 @@ app.register(chatRoutes, { prefix: '/chat' });
 app.register(groupRoutes, { prefix: '/groups' });
 app.register(taskRoutes, { prefix: '/tasks' });
 app.register(rewardRoutes, { prefix: '/rewards' });
+app.register(uploadRoutes, { prefix: '/upload' }); 
 
 
 await app.ready();
