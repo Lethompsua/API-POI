@@ -156,6 +156,36 @@ io.on('connection', (socket) => {
     socket.on('error', (err) => {
         console.error(`Socket Error: ${err.message}`);
     });
+
+    // A. Unirse a una sala de Grupo
+    socket.on('join-group', (groupId) => {
+        const roomName = `group-${groupId}`;
+        socket.join(roomName);
+        console.log(`Socket ${socket.id} se unió al grupo ${roomName}`);
+    });
+
+    // B. Enviar mensaje de Chat (Texto/Imagen)
+    socket.on('send-chat-message', (payload) => {
+        // payload = { receptorId, grupoId, mensaje, tipo, emisorId, emisorNombre }
+        
+        console.log("Reenviando mensaje de chat:", payload);
+
+        if (payload.grupoId) {
+            // Es mensaje de GRUPO: Enviar a todos en la sala del grupo
+            // (.broadcast para que no me llegue a mí mismo repetido)
+            socket.broadcast.to(`group-${payload.grupoId}`).emit('receive-chat-message', payload);
+        
+        } else if (payload.receptorId) {
+            // Es mensaje PRIVADO: Buscar el socket del receptor
+            const targetKey = String(payload.receptorId);
+            const targetSocketId = userSocketMap.get(targetKey);
+            
+            if (targetSocketId) {
+                io.to(targetSocketId).emit('receive-chat-message', payload);
+            }
+        }
+    });
+
 });
 
 const PORT = process.env.PORT || 3000;
