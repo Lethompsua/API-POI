@@ -164,25 +164,47 @@ io.on('connection', (socket) => {
         console.log(`Socket ${socket.id} se unió al grupo ${roomName}`);
     });
 
-    // B. Enviar mensaje de Chat (Texto/Imagen)
-    socket.on('send-chat-message', (payload) => {
-        // payload = { receptorId, grupoId, mensaje, tipo, emisorId, emisorNombre }
+    
+    // B. Enviar mensaje de Chat (GUARDANDO EN BD DIRECTAMENTE)
+    socket.on('send-chat-message', async (payload) => {
+        // payload = { receptorId, grupoId, mensaje, tipo, ID_Emisor, Nombre }
         
-        console.log("Reenviando mensaje de chat:", payload);
+        console.log("Procesando mensaje vía Socket:", payload);
 
-        if (payload.grupoId) {
-            // Es mensaje de GRUPO: Enviar a todos en la sala del grupo
-            // (.broadcast para que no me llegue a mí mismo repetido)
-            socket.broadcast.to(`group-${payload.grupoId}`).emit('receive-chat-message', payload);
-        
-        } else if (payload.receptorId) {
-            // Es mensaje PRIVADO: Buscar el socket del receptor
-            const targetKey = String(payload.receptorId);
-            const targetSocketId = userSocketMap.get(targetKey);
-            
-            if (targetSocketId) {
-                io.to(targetSocketId).emit('receive-chat-message', payload);
+        try {
+            // 1. GUARDAR EN BASE DE DATOS (Desde el Socket)
+            // Usamos app.db que ya está configurado en Fastify
+            await app.db.query(
+                `INSERT INTO chat (ID_Emisor, ID_Receptor, ID_Grupo, Mensaje, Tipo, Entregado) 
+                 VALUES (?, ?, ?, ?, ?, 1)`,
+                [
+                    payload.ID_Emisor, 
+                    payload.receptorId || null, 
+                    payload.grupoId || null, 
+                    payload.mensaje, 
+                    payload.tipo || 'texto'
+                ]
+            );
+            console.log("Mensaje guardado en BD vía Socket.");
+
+            // 2. REENVIAR AL DESTINATARIO (Broadcast)
+            if (payload.grupoId) {
+                // Mensaje de Grupo
+                socket.broadcast.to(`group-${payload.grupoId}`).emit('receive-chat-message', payload);
+            } else if (payload.receptorId) {
+                // Mensaje Privado
+                const targetKey = String(payload.receptorId);
+                const targetSocketId = userSocketMap.get(targetKey);
+                
+                if (targetSocketId) {
+                    io.to(targetSocketId).emit('receive-chat-message', payload);
+                }
             }
+
+        } catch (error) {
+            console.error("Error guardando mensaje en Socket:", error);
+            // Opcional: Avisar al emisor que hubo un error
+            socket.emit('message-error', { error: 'No se pudo guardar el mensaje' });
         }
     });
 
