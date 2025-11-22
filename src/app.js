@@ -88,22 +88,30 @@ io.on('connection', (socket) => {
 
     // 2. VIDEOLLAMADA (SIMPLE-PEER)
     // Este evento maneja Ofertas, Respuestas y Candidatos ICE automáticamente
-    socket.on("webrtc-signal", ({ to, signal }) => {
-        if (!to || !signal) {
-            console.error("Signal inválida en webrtc-signal");
+    socket.on("webrtc-signal", (payload) => {
+        // payload = { to: TARGET_USER_ID, signal: SIGNAL_DATA }
+        
+        if (!payload || !payload.to || !payload.signal) {
+            console.error("Signal inválida:", payload);
             return;
         }
 
-        const targetSocketId = userSocketMap.get(String(to));
-        
+        const targetUserId = String(payload.to);
+        const targetSocketId = userSocketMap.get(targetUserId);
+        const senderUserId = socket.data.userId; // Obtenido de la autenticación
+
         if (targetSocketId) {
-            console.log(`Retransmitiendo señal de video de ${socket.data.userId} a ${to}`);
+            console.log(`📹 Video: Señal de ${senderUserId} -> ${targetUserId}`);
+            
+            // Enviamos la señal directamente al socket del destino
             io.to(targetSocketId).emit("webrtc-signal", {
-                from: socket.data.userId || socket.id, // Le decimos quién llama
-                signal
+                from: senderUserId, // Es vital que el receptor sepa quién llama
+                signal: payload.signal
             });
         } else {
-            console.log(`Fallo video: Usuario ${to} no está conectado`);
+            console.warn(`⚠️ Fallo Video: Usuario ${targetUserId} no está conectado.`);
+            // Opcional: Avisar al que llama que el otro no está disponible
+            socket.emit('call-error', { message: 'El usuario no está disponible para videollamada.' });
         }
     });
 
