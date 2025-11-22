@@ -6,6 +6,7 @@ import swaggerUI from '@fastify/swagger-ui';
 import dotenv from 'dotenv';
 import multipart from '@fastify/multipart';
 import uploadRoutes from './routes/upload.js';
+
 dotenv.config();
 
 import { makePool } from './db.js';
@@ -18,27 +19,31 @@ import groupRoutes from './routes/groups.js';
 import taskRoutes from './routes/tasks.js';
 import rewardRoutes from './routes/rewards.js';
 
-// --- CREAR APP ---
+// --- 1. CREAR APP FASTIFY ---
 const app = Fastify({ logger: true });
 
-// --- CONFIGURAR PLUGINS ---
+// --- 2. CONFIGURAR BASE DE DATOS Y PLUGINS ---
 app.decorate('db', await makePool());
 
+// CORS: Permite que tu frontend en Vercel hable con este backend
 await app.register(cors, { 
-    origin: 'https://frontend-poi.vercel.app'
+    origin: 'https://frontend-poi.vercel.app', // ¡Asegúrate que esta URL sea exacta!
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 });
-await app.register(authPlugin);
 
-await app.register(swagger, {
-  openapi: {
-    info: { title: 'FIFA Simple API', version: '1.0.0' },
-    components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } }
-  }
-});
-await app.register(swaggerUI, { routePrefix: '/docs' });
+await app.register(authPlugin);
 await app.register(multipart);
 
-// RUTAS
+// Swagger (Documentación)
+await app.register(swagger, {
+    openapi: {
+        info: { title: 'FIFA Simple API', version: '1.0.0' },
+        components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } }
+    }
+});
+await app.register(swaggerUI, { routePrefix: '/docs' });
+
+// --- 3. REGISTRAR RUTAS ---
 app.register(authRoutes, { prefix: '/auth' });
 app.register(userRoutes, { prefix: '/users' });
 app.register(chatRoutes, { prefix: '/chat' });
@@ -47,37 +52,42 @@ app.register(taskRoutes, { prefix: '/tasks' });
 app.register(rewardRoutes, { prefix: '/rewards' });
 app.register(uploadRoutes, { prefix: '/upload' });
 
+// Espera a que Fastify esté listo antes de iniciar Socket.IO
 await app.ready();
 
-// --- SOCKET.IO ---
+// --- 4. CONFIGURAR SOCKET.IO ---
 const io = new Server(app.server, {
     cors: {
-        origin: "https://frontend-poi.vercel.app",
+        origin: "https://frontend-poi.vercel.app", // Mismo origen que arriba
         methods: ["GET", "POST"]
     }
 });
+
 console.log('Socket.io server running');
 
+// Mapa para rastrear usuarios conectados: ID_Usuario -> Socket_ID
 const userSocketMap = new Map();
 
-// -------------------------------
-//     SISTEMA SIMPLE-PEER ❤️
-// -------------------------------
 io.on('connection', (socket) => {
 
     console.log('Socket conectado:', socket.id);
 
-    socket.emit('whoami', { socketId: socket.id });
-
-    // Usuario autentica su ID
+    // 1. AUTENTICACIÓN DEL SOCKET
     socket.on('authenticate', (userId) => {
         if (!userId) return;
-        userSocketMap.set(String(userId), socket.id);
-        socket.data.userId = userId;
-        console.log(`Usuario ${userId} asociado al socket ${socket.id}`);
+        
+        // Guardamos la relación ID -> Socket
+        const key = String(userId);
+        userSocketMap.set(key, socket.id);
+        
+        // Guardamos el ID dentro del socket para referencia rápida
+        socket.data.userId = key;
+        
+        console.log(`Usuario ${key} asociado al socket ${socket.id}`);
     });
 
-    // 🔥 simple-peer usa SOLO ESTE EVENTO 🔥
+    // 2. VIDEOLLAMADA (SIMPLE-PEER)
+    // Este evento maneja Ofertas, Respuestas y Candidatos ICE automáticamente
     socket.on("webrtc-signal", ({ to, signal }) => {
         if (!to || !signal) {
             console.error("Signal inválida en webrtc-signal");
@@ -85,28 +95,32 @@ io.on('connection', (socket) => {
         }
 
         const targetSocketId = userSocketMap.get(String(to));
-        if (!targetSocketId) {
-            console.log(`Usuario ${to} no está conectado`);
-            return;
+        
+        if (targetSocketId) {
+            console.log(`Retransmitiendo señal de video de ${socket.data.userId} a ${to}`);
+            io.to(targetSocketId).emit("webrtc-signal", {
+                from: socket.data.userId || socket.id, // Le decimos quién llama
+                signal
+            });
+        } else {
+            console.log(`Fallo video: Usuario ${to} no está conectado`);
         }
-
-        io.to(targetSocketId).emit("webrtc-signal", {
-            from: socket.data?.userId || socket.id,
-            signal
-        });
     });
 
-    // -------------------------------
-    // CHAT
-    // -------------------------------
+    // 3. UNIRSE A SALAS DE GRUPO
     socket.on('join-group', (groupId) => {
         const room = `group-${groupId}`;
         socket.join(room);
         console.log(`Socket ${socket.id} entró a sala ${room}`);
     });
 
+    // 4. CHAT (TEXTO E IMÁGENES) - CON PERSISTENCIA
     socket.on('send-chat-message', async (payload) => {
+        // payload = { ID_Emisor, receptorId, grupoId, mensaje, tipo }
+        console.log("Procesando mensaje:", payload);
+
         try {
+            // A. Guardar en Base de Datos (MySQL en Railway)
             await app.db.query(
                 `INSERT INTO chat (ID_Emisor, ID_Receptor, ID_Grupo, Mensaje, Tipo, Entregado) 
                  VALUES (?, ?, ?, ?, ?, 1)`,
@@ -119,21 +133,27 @@ io.on('connection', (socket) => {
                 ]
             );
 
+            // B. Reenviar al Destinatario (Tiempo Real)
             if (payload.grupoId) {
-                socket.broadcast.to(`group-${payload.grupoId}`)
-                    .emit('receive-chat-message', payload);
+                // Es mensaje de Grupo -> Enviar a la sala
+                socket.broadcast.to(`group-${payload.grupoId}`).emit('receive-chat-message', payload);
             } else {
+                // Es mensaje Privado -> Buscar socket del usuario
                 const target = userSocketMap.get(String(payload.receptorId));
-                if (target) io.to(target).emit('receive-chat-message', payload);
+                if (target) {
+                    io.to(target).emit('receive-chat-message', payload);
+                }
             }
 
         } catch (err) {
-            console.error("Error al guardar mensaje:", err);
+            console.error("Error al guardar mensaje en BD:", err);
             socket.emit('message-error', { error: 'No se pudo guardar el mensaje' });
         }
     });
 
+    // 5. DESCONEXIÓN
     socket.on('disconnect', () => {
+        // Buscamos qué usuario era este socket y lo borramos del mapa
         for (let [userId, sockId] of userSocketMap.entries()) {
             if (sockId === socket.id) {
                 userSocketMap.delete(userId);
@@ -144,10 +164,11 @@ io.on('connection', (socket) => {
     });
 });
 
+// --- 5. INICIAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen({ port: PORT, host: '0.0.0.0' })
-  .then(() => console.log(`Server running on ${PORT}`))
+  .then(() => console.log(`Server running on port ${PORT}`))
   .catch(err => {
-    console.error(err);
+    app.log.error(err);
     process.exit(1);
   });
